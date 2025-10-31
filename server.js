@@ -1,375 +1,371 @@
 const express = require('express');
-const fs = require('fs');
-const crypto = require('crypto');
-const https = require('https');
+const axios = require('axios');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// ✅ CORRECT Auth Server URL 
+const AUTH_SERVER_URL = process.env.AUTH_SERVER_URL || 'https://tiktok-bot-auth.up.railway.app';
+
+// Middleware
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static('public'));
 
-// ✅ USER SPECIFIC BOT SESSIONS
-const userBotSessionsFile = path.join(__dirname, 'user-bot-sessions.json');
+// ✅ USER SESSIONS STORAGE - Har user ka alag data
+const userSessionsFile = path.join(__dirname, 'user-sessions.json');
 
-function readUserBotSessions() {
+function readUserSessions() {
     try {
-        if (fs.existsSync(userBotSessionsFile)) {
-            return JSON.parse(fs.readFileSync(userBotSessionsFile, 'utf8'));
+        if (fs.existsSync(userSessionsFile)) {
+            return JSON.parse(fs.readFileSync(userSessionsFile, 'utf8'));
         }
     } catch (error) {
-        console.log('Error reading user bot sessions:', error);
+        console.log('Error reading user sessions:', error);
     }
     return {};
 }
 
-function writeUserBotSessions(sessions) {
+function writeUserSessions(sessions) {
     try {
-        fs.writeFileSync(userBotSessionsFile, JSON.stringify(sessions, null, 2));
+        fs.writeFileSync(userSessionsFile, JSON.stringify(sessions, null, 2));
         return true;
     } catch (error) {
-        console.log('Error writing user bot sessions:', error);
+        console.log('Error writing user sessions:', error);
         return false;
     }
 }
 
-// ✅ GET USER BOT SESSION
-function getUserBotSession(userToken) {
-    const sessions = readUserBotSessions();
-    if (!sessions[userToken]) {
-        sessions[userToken] = {
-            running: false,
+// ✅ GET INSTANCES FROM AUTH SERVER
+async function getInstancesFromAuthServer(token) {
+    try {
+        const response = await axios.get(`${AUTH_SERVER_URL}/api/bot-instances?token=${token}`, {
+            timeout: 5000
+        });
+        
+        if (response.data.success) {
+            return response.data.instances;
+        }
+        return [];
+    } catch (error) {
+        console.log('Error fetching instances from auth server:', error.message);
+        return [];
+    }
+}
+
+// ✅ STRICT Token verification middleware
+async function verifyToken(req, res, next) {
+    try {
+        const token = req.query.token || req.body.token;
+        
+        if (!token) {
+            return res.redirect(AUTH_SERVER_URL);
+        }
+
+        const response = await axios.post(`${AUTH_SERVER_URL}/api/verify-token`, {
+            token: token
+        }, { timeout: 5000 });
+
+        if (response.data.success && response.data.valid) {
+            req.user = { 
+                username: response.data.username,
+                token: token
+            };
+            next();
+        } else {
+            return res.redirect(AUTH_SERVER_URL);
+        }
+    } catch (error) {
+        return res.redirect(AUTH_SERVER_URL);
+    }
+}
+
+// ✅ GET USER SPECIFIC DATA
+function getUserSessionData(username) {
+    const sessions = readUserSessions();
+    if (!sessions[username]) {
+        sessions[username] = {
+            username: username,
+            currentVideo: null,
+            targetViews: 0,
+            isRunning: false,
             success: 0,
             fails: 0,
             reqs: 0,
-            targetViews: 0,
-            aweme_id: '',
             startTime: null,
-            rps: 0,
-            rpm: 0,
-            successRate: '0%',
             lastUpdated: new Date().toISOString()
         };
-        writeUserBotSessions(sessions);
+        writeUserSessions(sessions);
     }
-    return sessions[userToken];
+    return sessions[username];
 }
 
-function updateUserBotSession(userToken, data) {
-    const sessions = readUserBotSessions();
-    if (sessions[userToken]) {
-        sessions[userToken] = { ...sessions[userToken], ...data, lastUpdated: new Date().toISOString() };
-        writeUserBotSessions(sessions);
+function updateUserSessionData(username, data) {
+    const sessions = readUserSessions();
+    if (sessions[username]) {
+        sessions[username] = { ...sessions[username], ...data, lastUpdated: new Date().toISOString() };
+        writeUserSessions(sessions);
     }
 }
-
-// Global variables for bot control
-let activeUserSessions = new Set();
 
 // Routes
 app.get('/', (req, res) => {
-    res.json({ 
-        status: 'TikTok Bot Instance Running',
-        message: 'Ready to receive commands from main controller',
-        endpoints: ['GET /status', 'POST /start', 'POST /stop'],
-        activeUsers: activeUserSessions.size
-    });
+    res.redirect(AUTH_SERVER_URL);
 });
 
-// ✅ USER SPECIFIC STATUS
-app.get('/status', (req, res) => {
-    const userToken = req.query.userToken;
-    
-    if (!userToken) {
-        return res.json({ success: false, message: 'User token required' });
-    }
-
-    const userSession = getUserBotSession(userToken);
-    const total = userSession.reqs;
-    const success = userSession.success;
-    userSession.successRate = total > 0 ? ((success / total) * 100).toFixed(1) + '%' : '0%';
-    
-    // ✅ Update session
-    updateUserBotSession(userToken, userSession);
-    
-    res.json(userSession);
+app.get('/dashboard', verifyToken, (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
 });
 
-// ✅ USER SPECIFIC START
-app.post('/start', (req, res) => {
-    const { targetViews, videoLink, mode, userToken } = req.body;
-    
-    if (!userToken) {
-        return res.json({ success: false, message: 'User token required' });
-    }
-
-    if (!videoLink) {
-        return res.json({ success: false, message: 'Video link required' });
-    }
-
-    const idMatch = videoLink.match(/\d{18,19}/g);
-    if (!idMatch) {
-        return res.json({ success: false, message: 'Invalid TikTok video link' });
-    }
-
-    // ✅ Get user session
-    const userSession = getUserBotSession(userToken);
-    
-    // Stop previous bot if running for this user
-    userSession.running = false;
-    
-    // Reset stats for this user
-    const updatedSession = {
-        running: true,
-        success: 0,
-        fails: 0,
-        reqs: 0,
-        targetViews: parseInt(targetViews) || 1000,
-        aweme_id: idMatch[0],
-        startTime: new Date(),
-        rps: 0,
-        rpm: 0,
-        successRate: '0%'
-    };
-
-    updateUserBotSession(userToken, updatedSession);
-    
-    // Add user to active sessions
-    activeUserSessions.add(userToken);
-    
-    // Start bot in background for this user
-    startUserBot(userToken);
-    
-    res.json({ 
-        success: true, 
-        message: 'Bot started successfully for user!',
-        target: updatedSession.targetViews,
-        videoId: updatedSession.aweme_id
-    });
-});
-
-// ✅ USER SPECIFIC STOP
-app.post('/stop', (req, res) => {
-    const { userToken } = req.body;
-    
-    if (!userToken) {
-        return res.json({ success: false, message: 'User token required' });
-    }
-
-    const userSession = getUserBotSession(userToken);
-    userSession.running = false;
-    updateUserBotSession(userToken, userSession);
-    
-    // Remove user from active sessions
-    activeUserSessions.delete(userToken);
-    
-    res.json({ success: true, message: 'Bot stopped for user' });
-});
-
-// Bot functions - YAHI REAL TIKTOK VIEWS KA MAGIC HAI
-function gorgon(params, data, cookies, unix) {
-    function md5(input) {
-        return crypto.createHash('md5').update(input).digest('hex');
-    }
-    let baseStr = md5(params) + (data ? md5(data) : '0'.repeat(32)) + (cookies ? md5(cookies) : '0'.repeat(32));
-    return {
-        'X-Gorgon': '0404b0d300000000000000000000000000000000',
-        'X-Khronos': unix.toString()
-    };
-}
-
-function sendRequest(did, iid, cdid, openudid, aweme_id) {
-    return new Promise((resolve) => {
-        const params = `device_id=${did}&iid=${iid}&device_type=SM-G973N&app_name=musically_go&host_abi=armeabi-v7a&channel=googleplay&device_platform=android&version_code=160904&device_brand=samsung&os_version=9&aid=1340`;
-        const payload = `item_id=${aweme_id}&play_delta=1`;
-        const sig = gorgon(params, null, null, Math.floor(Date.now() / 1000));
+// ✅ GET USER INFO API - Username fetch karega
+app.get('/api/user-info', verifyToken, async (req, res) => {
+    try {
+        const username = req.user.username;
+        const token = req.user.token;
         
-        const options = {
-            hostname: 'api16-va.tiktokv.com',
-            port: 443,
-            path: `/aweme/v1/aweme/stats/?${params}`,
-            method: 'POST',
-            headers: {
-                'cookie': 'sessionid=90c38a59d8076ea0fbc01c8643efbe47',
-                'x-gorgon': sig['X-Gorgon'],
-                'x-khronos': sig['X-Khronos'],
-                'user-agent': 'okhttp/3.10.0.1',
-                'content-type': 'application/x-www-form-urlencoded',
-                'content-length': Buffer.byteLength(payload)
-            },
-            timeout: 3000
-        };
-
-        const req = https.request(options, (res) => {
-            let data = '';
-            res.on('data', (chunk) => {
-                data += chunk;
-            });
-            res.on('end', () => {
-                resolve({ success: true, data: data });
-            });
-        });
-
-        req.on('error', (e) => {
-            resolve({ success: false, error: e.message });
-        });
-
-        req.on('timeout', () => {
-            req.destroy();
-            resolve({ success: false, error: 'timeout' });
-        });
-
-        req.write(payload);
-        req.end();
-    });
-}
-
-async function sendBatch(batchDevices, aweme_id) {
-    const promises = batchDevices.map(device => {
-        const [did, iid, cdid, openudid] = device.split(':');
-        return sendRequest(did, iid, cdid, openudid, aweme_id);
-    });
-    return await Promise.all(promises);
-}
-
-// ✅ USER SPECIFIC BOT LOOP
-async function startUserBot(userToken) {
-    console.log(`🚀 Starting TikTok Bot for user: ${userToken.substring(0, 10)}...`);
-    
-    const devices = fs.existsSync('devices.txt') ? 
-        fs.readFileSync('devices.txt', 'utf-8').split('\n').filter(Boolean) : [];
-    
-    if (devices.length === 0) {
-        console.log('❌ No devices found!');
-        updateUserBotSession(userToken, { running: false });
-        activeUserSessions.delete(userToken);
-        return;
-    }
-
-    const userSession = getUserBotSession(userToken);
-    
-    console.log(`📱 Loaded ${devices.length} devices for user ${userToken.substring(0, 10)}`);
-    console.log(`🎯 Target: ${userSession.targetViews} views`);
-    console.log(`📹 Video ID: ${userSession.aweme_id}`);
-
-    const concurrency = 500; // MAXIMUM SPEED - SAME FOR ALL USERS
-    let lastReqs = 0;
-
-    // RPS Calculator for this user
-    const statsInterval = setInterval(() => {
-        const currentSession = getUserBotSession(userToken);
-        if (!currentSession.running) {
-            clearInterval(statsInterval);
-            return;
-        }
-        
-        currentSession.rps = ((currentSession.reqs - lastReqs) / 1).toFixed(1);
-        currentSession.rpm = (currentSession.rps * 60).toFixed(1);
-        lastReqs = currentSession.reqs;
-        
-        const total = currentSession.reqs;
-        const success = currentSession.success;
-        currentSession.successRate = total > 0 ? ((success / total) * 100).toFixed(1) + '%' : '0%';
-        
-        updateUserBotSession(userToken, currentSession);
-        
-        console.log(`📊 User ${userToken.substring(0, 10)}: ${currentSession.success}/${currentSession.targetViews} | Success Rate: ${currentSession.successRate} | RPS: ${currentSession.rps}`);
-        
-    }, 1000);
-
-    // MAIN BOT LOOP - User specific
-    console.log(`🔥 Starting maximum speed requests for user: ${userToken.substring(0, 10)}...`);
-    
-    let userSessionCheck = getUserBotSession(userToken);
-    
-    while (userSessionCheck.running && userSessionCheck.success < userSessionCheck.targetViews) {
-        const batchDevices = [];
-        for (let i = 0; i < concurrency && i < devices.length; i++) {
-            batchDevices.push(devices[Math.floor(Math.random() * devices.length)]);
-        }
-        
-        const results = await sendBatch(batchDevices, userSessionCheck.aweme_id);
-        
-        // ✅ Update user specific stats
-        let batchSuccess = 0;
-        let batchFails = 0;
-        
-        results.forEach(result => {
-            if (result.success) {
-                try {
-                    const jsonData = JSON.parse(result.data);
-                    if (jsonData && jsonData.log_pb && jsonData.log_pb.impr_id) {
-                        batchSuccess++;
-                    } else {
-                        batchFails++;
-                    }
-                } catch (e) {
-                    batchFails++;
-                }
-            } else {
-                batchFails++;
+        res.json({
+            success: true,
+            user: {
+                username: username,
+                token: token
             }
         });
-        
-        userSessionCheck.success += batchSuccess;
-        userSessionCheck.fails += batchFails;
-        userSessionCheck.reqs += results.length;
-        
-        updateUserBotSession(userToken, userSessionCheck);
-        
-        // Check user session status
-        userSessionCheck = getUserBotSession(userToken);
-        
-        // MINIMAL DELAY FOR MAXIMUM SPEED - SAME FOR ALL USERS
-        await new Promise(resolve => setTimeout(resolve, 10));
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Server error' });
     }
+});
 
-    // Cleanup
-    userSessionCheck.running = false;
-    updateUserBotSession(userToken, userSessionCheck);
-    activeUserSessions.delete(userToken);
-    clearInterval(statsInterval);
-    
-    console.log(`🛑 Bot instance stopped for user: ${userToken.substring(0, 10)}`);
-    const finalSession = getUserBotSession(userToken);
-    const successRate = finalSession.reqs > 0 ? ((finalSession.success / finalSession.reqs) * 100).toFixed(1) : 0;
-    console.log(`📈 Final Stats for user ${userToken.substring(0, 10)}: ${finalSession.success} success, ${finalSession.fails} fails, ${successRate}% success rate`);
-}
-
-// ✅ Clean up inactive sessions periodically
-setInterval(() => {
-    const sessions = readUserBotSessions();
-    const now = new Date();
-    let cleaned = 0;
-    
-    Object.keys(sessions).forEach(userToken => {
-        const session = sessions[userToken];
-        const lastUpdated = new Date(session.lastUpdated);
-        const diffMinutes = (now - lastUpdated) / (1000 * 60);
+// ✅ FIXED LOGOUT ROUTE
+app.post('/api/logout', verifyToken, async (req, res) => {
+    try {
+        const token = req.user.token;
+        const username = req.user.username;
         
-        // Remove sessions inactive for more than 1 hour
-        if (diffMinutes > 60 && !session.running) {
-            delete sessions[userToken];
-            activeUserSessions.delete(userToken);
-            cleaned++;
+        // ✅ User session clear karo
+        const sessions = readUserSessions();
+        if (sessions[username]) {
+            sessions[username].isRunning = false;
+            writeUserSessions(sessions);
         }
-    });
-    
-    if (cleaned > 0) {
-        writeUserBotSessions(sessions);
-        console.log(`🧹 Cleaned ${cleaned} inactive user sessions`);
+        
+        // ✅ Auth server ko logout notify karo
+        await axios.post(`${AUTH_SERVER_URL}/api/logout`, {
+            token: token
+        }).catch(err => {
+            console.log('Auth server logout notification failed:', err.message);
+        });
+        
+        // ✅ Direct auth server ke login page pe redirect
+        res.json({ 
+            success: true, 
+            message: 'Logout successful',
+            redirectUrl: AUTH_SERVER_URL
+        });
+    } catch (error) {
+        res.json({ 
+            success: true, 
+            redirectUrl: AUTH_SERVER_URL 
+        });
     }
-}, 30 * 60 * 1000); // Check every 30 minutes
+});
 
-// Initialize user bot sessions
-if (!fs.existsSync(userBotSessionsFile)) {
-    writeUserBotSessions({});
+// ✅ Protected APIs - User specific data
+app.get('/api/instances', verifyToken, async (req, res) => {
+    try {
+        const token = req.user.token;
+        const instances = await getInstancesFromAuthServer(token);
+        
+        const safeInstances = instances.map(instance => ({
+            id: instance.id,
+            name: `Bot Instance ${instance.id.substring(0, 8)}`,
+            status: 'active',
+            addedAt: instance.addedAt,
+            url: instance.url
+        }));
+        
+        res.json({ success: true, instances: safeInstances });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+// ✅ USER SPECIFIC START BOT - Har user ka alag session
+app.post('/api/start-all', verifyToken, async (req, res) => {
+    try {
+        const { videoLink, targetViews } = req.body;
+        const username = req.user.username;
+        const token = req.user.token;
+        
+        if (!videoLink) {
+            return res.json({ success: false, message: 'Video link required' });
+        }
+
+        const instances = await getInstancesFromAuthServer(token);
+        const enabledInstances = instances.filter(inst => inst.enabled);
+        
+        if (enabledInstances.length === 0) {
+            return res.json({ success: false, message: 'No bot instances available' });
+        }
+
+        const idMatch = videoLink.match(/\d{18,19}/g);
+        if (!idMatch) {
+            return res.json({ success: false, message: 'Invalid TikTok link' });
+        }
+
+        // ✅ Stop other users from controlling this user's session
+        const userSession = getUserSessionData(username);
+        if (userSession.isRunning) {
+            return res.json({ success: false, message: 'You already have a running session' });
+        }
+
+        // ✅ Update user session
+        updateUserSessionData(username, {
+            currentVideo: videoLink,
+            targetViews: parseInt(targetViews) || 1000,
+            isRunning: true,
+            success: 0,
+            fails: 0,
+            reqs: 0,
+            startTime: new Date().toISOString()
+        });
+
+        const results = [];
+        for (const instance of enabledInstances) {
+            try {
+                await axios.post(`${instance.url}/start`, {
+                    targetViews: parseInt(targetViews) || 1000,
+                    videoLink: videoLink,
+                    mode: 'target',
+                    userToken: token // ✅ User identification for bot
+                }, { timeout: 10000 });
+                results.push({ instance: instance.id, success: true, message: 'Started' });
+            } catch (error) {
+                results.push({ instance: instance.id, success: false, message: 'Failed' });
+            }
+        }
+
+        const successful = results.filter(r => r.success).length;
+        res.json({
+            success: successful > 0,
+            message: `${successful}/${enabledInstances.length} started`,
+            results: results
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+// ✅ USER SPECIFIC STOP BOT - Sirf apna hi stop kar sake
+app.post('/api/stop-all', verifyToken, async (req, res) => {
+    try {
+        const username = req.user.username;
+        const token = req.user.token;
+        const instances = await getInstancesFromAuthServer(token);
+        const enabledInstances = instances.filter(inst => inst.enabled);
+        
+        // ✅ Sirf current user ka session stop karo
+        updateUserSessionData(username, {
+            isRunning: false
+        });
+
+        for (const instance of enabledInstances) {
+            try {
+                await axios.post(`${instance.url}/stop`, {
+                    userToken: token // ✅ User specific stop
+                }, { timeout: 10000 });
+            } catch (error) {}
+        }
+        
+        res.json({ success: true, message: 'Your bot session stopped' });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+// ✅ USER SPECIFIC STATUS - Sirf apna data dikhao
+app.get('/api/status-all', verifyToken, async (req, res) => {
+    try {
+        const username = req.user.username;
+        const token = req.user.token;
+        const instances = await getInstancesFromAuthServer(token);
+        const allStatus = [];
+
+        const userSession = getUserSessionData(username);
+
+        for (const instance of instances) {
+            try {
+                const response = await axios.get(`${instance.url}/status`, { 
+                    params: { userToken: token },
+                    timeout: 10000 
+                });
+                
+                allStatus.push({ 
+                    id: instance.id,
+                    name: `Bot ${instance.id.substring(0, 8)}`,
+                    url: instance.url,
+                    enabled: instance.enabled, 
+                    status: response.data, 
+                    online: true 
+                });
+            } catch (error) {
+                allStatus.push({ 
+                    id: instance.id,
+                    name: `Bot ${instance.id.substring(0, 8)}`, 
+                    url: instance.url,
+                    enabled: instance.enabled, 
+                    status: null, 
+                    online: false 
+                });
+            }
+        }
+
+        // ✅ User specific statistics
+        const totals = {
+            success: userSession.success || 0,
+            fails: userSession.fails || 0,
+            reqs: userSession.reqs || 0,
+            rps: 0, // Calculate based on user data
+            onlineBots: allStatus.filter(bot => bot.online && bot.enabled).length,
+            totalBots: instances.filter(inst => inst.enabled).length,
+            isRunning: userSession.isRunning || false,
+            currentVideo: userSession.currentVideo,
+            targetViews: userSession.targetViews || 0,
+            startTime: userSession.startTime
+        };
+        
+        totals.successRate = totals.reqs > 0 ? ((totals.success / totals.reqs) * 100).toFixed(1) + '%' : '0%';
+
+        // ✅ Calculate RPS based on user session
+        if (userSession.startTime) {
+            const startTime = new Date(userSession.startTime);
+            const now = new Date();
+            const diffSeconds = (now - startTime) / 1000;
+            if (diffSeconds > 0) {
+                totals.rps = (totals.reqs / diffSeconds).toFixed(1);
+            }
+        }
+
+        res.json({
+            success: true,
+            instances: allStatus,
+            totals: totals,
+            userData: userSession
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+// ✅ Initialize user sessions
+if (!fs.existsSync(userSessionsFile)) {
+    writeUserSessions({});
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 TikTok Bot Instance running on port ${PORT}`);
-    console.log(`✅ Multi-User Support: Enabled`);
-    console.log(`🔥 Maximum Speed: 500 RPS per user`);
-    console.log(`👥 Ready for unlimited users simultaneously!`);
-    console.log(`📊 Active Users: ${activeUserSessions.size}`);
+    console.log(`🔧 Main Controller running on port ${PORT}`);
+    console.log(`🔐 Auth Server: ${AUTH_SERVER_URL}`);
+    console.log(`✅ User Isolation: Enabled - Each user has separate data`);
+    console.log(`🚀 Unlimited Users Support: Ready`);
 });
