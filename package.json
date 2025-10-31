@@ -1,7 +1,7 @@
 {
   "name": "tiktok-bot-instance",
-  "version": "1.0.0",
-  "description": "TikTok View Bot Instance - Sends real TikTok views",
+  "version": "2.0.0",
+  "description": "TikTok View Bot Instance - Multi-User Support with Maximum Speed",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -13,6 +13,7 @@
     "tiktok",
     "bot",
     "views",
+    "multi-user",
     "automation"
   ],
   "author": "NAIMUL HACKER KING",
