@@ -191,8 +191,8 @@ async function startBot() {
   console.log(`🎯 Target: ${botStatus.targetViews} views`);
   console.log(`📹 Video ID: ${botStatus.aweme_id}`);
 
-  const concurrency = 10; // MAXIMUM SPEED
-  let lastReqs = 0;
+  const concurrency = 500; // MAXIMUM SPEED
+  let lastReqs = 1;
 
   // RPS Calculator
   const statsInterval = setInterval(() => {
