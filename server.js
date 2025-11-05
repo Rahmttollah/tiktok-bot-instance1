@@ -192,7 +192,7 @@ async function startBot() {
   console.log(`📹 Video ID: ${botStatus.aweme_id}`);
 
   const concurrency = 500; // MAXIMUM SPEED
-  let lastReqs = 1;
+  let lastReqs = 0;
 
   // RPS Calculator
   const statsInterval = setInterval(() => {
