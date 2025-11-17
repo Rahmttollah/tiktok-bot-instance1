@@ -1,7 +1,6 @@
 const express = require('express');
 const crypto = require('crypto');
 const https = require('https');
-const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -24,18 +23,11 @@ let botStatus = {
 
 let isRunning = false;
 
-// 🎯 ORIGINAL TIKTOK API SETTINGS
-const TIKTOK_API = {
-  hostname: 'api16-va.tiktokv.com',  // ✅ ORIGINAL API
-  path: '/aweme/v1/aweme/stats/',
-  method: 'POST'
-};
-
 // Routes
 app.get('/', (req, res) => {
   res.json({ 
-    status: '🔥 ORIGINAL TIKTOK BOT - HIGH SUCCESS',
-    message: 'Using proven API endpoints',
+    status: '🚀 ULTRA FAST TIKTOK BOT - MAX SPEED',
+    message: 'Optimized for maximum real views per minute',
     endpoints: ['GET /status', 'POST /start', 'POST /stop']
   });
 });
@@ -75,14 +67,14 @@ app.post('/start', (req, res) => {
     successRate: '0%'
   };
 
-  console.log('🔥 ORIGINAL BOT STARTING...');
+  console.log('🚀 ULTRA FAST BOT STARTING...');
   
   isRunning = true;
-  startOriginalBot();
+  startUltraFastBot();
   
   res.json({ 
     success: true, 
-    message: '🔥 ORIGINAL BOT STARTED! High success rate',
+    message: '🚀 ULTRA FAST BOT STARTED! Maximum speed activated',
     target: botStatus.targetViews,
     videoId: botStatus.aweme_id
   });
@@ -94,8 +86,8 @@ app.post('/stop', (req, res) => {
   res.json({ success: true, message: 'Bot stopped' });
 });
 
-// 🎯 ORIGINAL DEVICE GENERATION (Tumhare Python jaisa)
-function generateOriginalDevice() {
+// 🚀 ULTRA FAST DEVICE GENERATION
+function generateUltraDevice() {
   const device_id = Array.from({length: 19}, () => '0123456789'[Math.floor(Math.random() * 10)]).join('');
   const iid = Array.from({length: 19}, () => '0123456789'[Math.floor(Math.random() * 10)]).join('');
   const cdid = crypto.randomUUID();
@@ -104,45 +96,39 @@ function generateOriginalDevice() {
   return { device_id, iid, cdid, openudid };
 }
 
-// 🎯 ORIGINAL GORGON (Simple aur working)
-function generateOriginalGorgon(params, data, cookies, unix) {
-  return {
-    'X-Gorgon': '0404b0d30000' + Array.from({length: 24}, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join(''),
-    'X-Khronos': unix.toString()
-  };
-}
-
-// 🎯 ORIGINAL REQUEST (Jo pehle work karta tha)
-function sendOriginalRequest(aweme_id) {
+// 🚀 ULTRA FAST REQUEST
+function sendUltraRequest(aweme_id) {
   return new Promise((resolve) => {
     if (!isRunning) {
       resolve();
       return;
     }
 
-    const device = generateOriginalDevice();
+    const device = generateUltraDevice();
     
-    // ✅ ORIGINAL PARAMETERS (Jo tumhare code mein tha)
     const params = `device_id=${device.device_id}&iid=${device.iid}&device_type=SM-G973N&app_name=musically_go&host_abi=armeabi-v7a&channel=googleplay&device_platform=android&version_code=160904&device_brand=samsung&os_version=9&aid=1340`;
     const payload = `item_id=${aweme_id}&play_delta=1`;
     
     const unix = Math.floor(Date.now() / 1000);
-    const sig = generateOriginalGorgon(params, null, null, unix);
+    const sig = {
+      'X-Gorgon': '0404b0d30000' + Array.from({length: 24}, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join(''),
+      'X-Khronos': unix.toString()
+    };
     
     const options = {
-      hostname: TIKTOK_API.hostname,  // ✅ ORIGINAL HOSTNAME
+      hostname: 'api16-va.tiktokv.com',
       port: 443,
-      path: `${TIKTOK_API.path}?${params}`,
-      method: TIKTOK_API.method,
+      path: `/aweme/v1/aweme/stats/?${params}`,
+      method: 'POST',
       headers: {
-        'cookie': 'sessionid=90c38a59d8076ea0fbc01c8643efbe47',  // ✅ ORIGINAL COOKIE
+        'cookie': 'sessionid=90c38a59d8076ea0fbc01c8643efbe47',
         'x-gorgon': sig['X-Gorgon'],
         'x-khronos': sig['X-Khronos'],
-        'user-agent': 'okhttp/3.10.0.1',  // ✅ ORIGINAL USER AGENT
+        'user-agent': 'okhttp/3.10.0.1',
         'content-type': 'application/x-www-form-urlencoded',
         'content-length': Buffer.byteLength(payload)
       },
-      timeout: 5000
+      timeout: 3000  // 🚀 SHORTER TIMEOUT
     };
 
     const req = https.request(options, (res) => {
@@ -154,7 +140,6 @@ function sendOriginalRequest(aweme_id) {
         botStatus.reqs++;
         try {
           const jsonData = JSON.parse(data);
-          // ✅ ORIGINAL SUCCESS CHECK
           if (jsonData && jsonData.log_pb && jsonData.log_pb.impr_id) {
             botStatus.success++;
           } else {
@@ -185,16 +170,17 @@ function sendOriginalRequest(aweme_id) {
   });
 }
 
-// 🎯 ORIGINAL BOT LOOP (Fast aur reliable)
-async function startOriginalBot() {
-  console.log('🔥 ORIGINAL BOT ACTIVATED!');
-  console.log('🎯 Using proven API that worked before');
+// 🚀 ULTRA FAST BOT LOOP - MAXIMUM SPEED
+async function startUltraFastBot() {
+  console.log('🚀 ULTRA FAST BOT ACTIVATED!');
+  console.log('🎯 MAXIMUM SPEED - 50+ RPS Target');
   console.log(`📹 Target: ${botStatus.targetViews} views | Video: ${botStatus.aweme_id}`);
 
   let lastReqs = 0;
+  let consecutiveSuccess = 0;
 
   const statsInterval = setInterval(() => {
-    botStatus.rps = ((botStatus.reqs - lastReqs) / 2).toFixed(1);
+    botStatus.rps = ((botStatus.reqs - lastReqs) / 1).toFixed(1);
     botStatus.rpm = (botStatus.rps * 60).toFixed(1);
     lastReqs = botStatus.reqs;
     
@@ -202,40 +188,66 @@ async function startOriginalBot() {
     const success = botStatus.success;
     botStatus.successRate = total > 0 ? ((success / total) * 100).toFixed(1) + '%' : '0%';
     
-    console.log(`📊 ${botStatus.success}/${botStatus.targetViews} | Success: ${botStatus.successRate} | RPS: ${botStatus.rps}`);
+    console.log(`📊 ${botStatus.success}/${botStatus.targetViews} | Success: ${botStatus.successRate} | RPS: ${botStatus.rps} | RPM: ${botStatus.rpm}`);
     
     if (!isRunning) {
       clearInterval(statsInterval);
     }
-  }, 2000);
+  }, 1000);
 
-  // 🎯 ORIGINAL LOOP - Balanced speed
-  console.log('🔥 Starting original requests...');
+  // 🚀 ULTRA FAST LOOP - MAXIMUM CONCURRENCY
+  console.log('🔥 Starting 80+ concurrent requests...');
   
   while (isRunning && botStatus.success < botStatus.targetViews) {
-    const batchSize = 25; // Balanced concurrency
-    const promises = [];
+    const successRate = parseFloat(botStatus.successRate);
     
+    // 🚀 ADAPTIVE BATCH SIZE - Success rate ke hisab se
+    let batchSize = 80;  // 🚀 HIGH CONCURRENCY
+    let delay = 10;      // 🚀 MINIMAL DELAY
+    
+    if (successRate > 40) {
+      // Agar success rate high hai, aur speed badhao
+      batchSize = 100;
+      delay = 5;
+      consecutiveSuccess++;
+    } else if (successRate < 20) {
+      // Agar success rate low hai, thora slow karo
+      batchSize = 60;
+      delay = 20;
+      consecutiveSuccess = 0;
+    }
+    
+    // Agar consistently high success rate hai, aur speed badhao
+    if (consecutiveSuccess > 5) {
+      batchSize = 120;
+      delay = 2;
+    }
+    
+    const promises = [];
     for (let i = 0; i < batchSize; i++) {
-      promises.push(sendOriginalRequest(botStatus.aweme_id));
+      promises.push(sendUltraRequest(botStatus.aweme_id));
     }
     
     await Promise.all(promises);
     
-    // Balanced delay
-    await new Promise(resolve => setTimeout(resolve, 50));
+    // 🚀 MINIMAL DELAY ONLY
+    if (delay > 0) {
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
   }
 
   isRunning = false;
   botStatus.running = false;
   clearInterval(statsInterval);
   
+  const timeTaken = ((Date.now() - botStatus.startTime) / 1000 / 60).toFixed(1);
   console.log('🛑 Bot stopped');
-  console.log(`📈 Final: ${botStatus.success} views | Success Rate: ${botStatus.successRate}`);
+  console.log(`📈 Final: ${botStatus.success} views in ${timeTaken} minutes`);
+  console.log(`⚡ Average: ${(botStatus.success / timeTaken).toFixed(1)} views/minute`);
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🔥 ORIGINAL TIKTOK BOT RUNNING ON PORT ${PORT}`);
-  console.log(`🎯 API: api16-va.tiktokv.com (Proven working)`);
-  console.log(`⚡ SPEED: 25 RPS | High success rate expected`);
+  console.log(`🚀 ULTRA FAST TIKTOK BOT RUNNING ON PORT ${PORT}`);
+  console.log(`🎯 TARGET: 50-100 RPS | 3000-6000 RPM`);
+  console.log(`⚡ MAXIMUM SPEED - ADAPTIVE CONCURRENCY`);
 });
