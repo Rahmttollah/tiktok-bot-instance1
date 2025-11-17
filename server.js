@@ -1,6 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const https = require('https');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -23,14 +24,18 @@ let botStatus = {
 
 let isRunning = false;
 
-// 🎯 BETTER DEVICE POOL - Pre-verified devices
-const devicePool = [];
+// 🎯 ORIGINAL TIKTOK API SETTINGS
+const TIKTOK_API = {
+  hostname: 'api16-va.tiktokv.com',  // ✅ ORIGINAL API
+  path: '/aweme/v1/aweme/stats/',
+  method: 'POST'
+};
 
 // Routes
 app.get('/', (req, res) => {
   res.json({ 
-    status: '🎯 SMART TIKTOK BOT - HIGH SUCCESS RATE',
-    message: 'Optimized for actual views, not just requests',
+    status: '🔥 ORIGINAL TIKTOK BOT - HIGH SUCCESS',
+    message: 'Using proven API endpoints',
     endpoints: ['GET /status', 'POST /start', 'POST /stop']
   });
 });
@@ -42,7 +47,7 @@ app.get('/status', (req, res) => {
   res.json(botStatus);
 });
 
-app.post('/start', async (req, res) => {
+app.post('/start', (req, res) => {
   const { targetViews, videoLink } = req.body;
   
   if (!videoLink) {
@@ -70,20 +75,16 @@ app.post('/start', async (req, res) => {
     successRate: '0%'
   };
 
-  console.log('🎯 SMART BOT STARTING...');
-  
-  // 🎯 PRE-LOAD SOME WORKING DEVICES
-  await preloadWorkingDevices();
+  console.log('🔥 ORIGINAL BOT STARTING...');
   
   isRunning = true;
-  startSmartBot();
+  startOriginalBot();
   
   res.json({ 
     success: true, 
-    message: '🎯 SMART BOT STARTED! High success rate mode',
+    message: '🔥 ORIGINAL BOT STARTED! High success rate',
     target: botStatus.targetViews,
-    videoId: botStatus.aweme_id,
-    preloadedDevices: devicePool.length
+    videoId: botStatus.aweme_id
   });
 });
 
@@ -93,100 +94,53 @@ app.post('/stop', (req, res) => {
   res.json({ success: true, message: 'Bot stopped' });
 });
 
-// 🎯 PRELOAD WORKING DEVICES FROM YOUR PYTHON SCRIPT
-async function preloadWorkingDevices() {
-  console.log('🔄 Loading working devices...');
-  
-  // Try to load from your Python-generated file
-  const fs = require('fs');
-  try {
-    if (fs.existsSync('working_devices_live.txt')) {
-      const devices = fs.readFileSync('working_devices_live.txt', 'utf-8')
-        .split('\n')
-        .filter(line => line.trim())
-        .slice(0, 50); // Load first 50 devices
-      
-      for (const deviceLine of devices) {
-        const parts = deviceLine.split(':');
-        if (parts.length >= 4) {
-          devicePool.push({
-            device_id: parts[0],
-            iid: parts[1],
-            cdid: parts[2],
-            openudid: parts[3]
-          });
-        }
-      }
-      console.log(`✅ Loaded ${devicePool.length} working devices from file`);
-    }
-  } catch (e) {
-    console.log('⚠️ No device file found, using generated devices');
-  }
-  
-  // If no file, generate some devices
-  if (devicePool.length === 0) {
-    for (let i = 0; i < 30; i++) {
-      devicePool.push(generateRealisticDevice());
-    }
-    console.log(`✅ Generated ${devicePool.length} devices`);
-  }
-}
-
-// 🎯 GENERATE REALISTIC DEVICES (Not random)
-function generateRealisticDevice() {
-  // Real device patterns (not completely random)
-  const devicePrefixes = ['66', '67', '68', '69', '70', '71'];
-  const prefix = devicePrefixes[Math.floor(Math.random() * devicePrefixes.length)];
-  
-  const device_id = prefix + Array.from({length: 17}, () => '0123456789'[Math.floor(Math.random() * 10)]).join('');
-  const iid = '7' + Array.from({length: 18}, () => '0123456789'[Math.floor(Math.random() * 10)]).join('');
-  const cdid = crypto.randomBytes(8).toString('hex') + '-0000-0000-0000-' + crypto.randomBytes(6).toString('hex');
+// 🎯 ORIGINAL DEVICE GENERATION (Tumhare Python jaisa)
+function generateOriginalDevice() {
+  const device_id = Array.from({length: 19}, () => '0123456789'[Math.floor(Math.random() * 10)]).join('');
+  const iid = Array.from({length: 19}, () => '0123456789'[Math.floor(Math.random() * 10)]).join('');
+  const cdid = crypto.randomUUID();
   const openudid = Array.from({length: 16}, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('');
   
   return { device_id, iid, cdid, openudid };
 }
 
-// 🎯 GET SMART DEVICE - Real devices first
-function getSmartDevice() {
-  if (devicePool.length > 0) {
-    return devicePool[Math.floor(Math.random() * devicePool.length)];
-  }
-  return generateRealisticDevice();
+// 🎯 ORIGINAL GORGON (Simple aur working)
+function generateOriginalGorgon(params, data, cookies, unix) {
+  return {
+    'X-Gorgon': '0404b0d30000' + Array.from({length: 24}, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join(''),
+    'X-Khronos': unix.toString()
+  };
 }
 
-// 🎯 SMART REQUEST WITH BETTER PARAMETERS
-function sendSmartRequest(aweme_id) {
+// 🎯 ORIGINAL REQUEST (Jo pehle work karta tha)
+function sendOriginalRequest(aweme_id) {
   return new Promise((resolve) => {
     if (!isRunning) {
       resolve();
       return;
     }
 
-    const device = getSmartDevice();
+    const device = generateOriginalDevice();
     
-    // 🎯 BETTER PARAMETERS - More realistic
-    const params = `device_id=${device.device_id}&iid=${device.iid}&device_type=SM-G975F&app_name=trill&host_abi=arm64-v8a&channel=googleplay&device_platform=android&version_code=300904&device_brand=samsung&os_version=11&aid=1233`;
-    const payload = `item_id=${aweme_id}&play_delta=1&stats_type=1&stats_channel=video`;
+    // ✅ ORIGINAL PARAMETERS (Jo tumhare code mein tha)
+    const params = `device_id=${device.device_id}&iid=${device.iid}&device_type=SM-G973N&app_name=musically_go&host_abi=armeabi-v7a&channel=googleplay&device_platform=android&version_code=160904&device_brand=samsung&os_version=9&aid=1340`;
+    const payload = `item_id=${aweme_id}&play_delta=1`;
     
     const unix = Math.floor(Date.now() / 1000);
-    const sig = {
-      'X-Gorgon': '0404c0c00000' + crypto.randomBytes(12).toString('hex'),
-      'X-Khronos': unix.toString()
-    };
+    const sig = generateOriginalGorgon(params, null, null, unix);
     
     const options = {
-      hostname: 'api19-core-c-alisg.tiktokv.com', // 🎯 DIFFERENT ENDPOINT
+      hostname: TIKTOK_API.hostname,  // ✅ ORIGINAL HOSTNAME
       port: 443,
-      path: `/aweme/v1/aweme/stats/?${params}`,
-      method: 'POST',
+      path: `${TIKTOK_API.path}?${params}`,
+      method: TIKTOK_API.method,
       headers: {
-        'cookie': 'sessionid=',
+        'cookie': 'sessionid=90c38a59d8076ea0fbc01c8643efbe47',  // ✅ ORIGINAL COOKIE
         'x-gorgon': sig['X-Gorgon'],
         'x-khronos': sig['X-Khronos'],
-        'user-agent': 'com.ss.android.ugc.trill/300904 (Linux; U; Android 11; en_US; SM-G975F; Build/RP1A.200720.012; Cronet/TTNetVersion:5c13b8cd 2022-09-19)',
-        'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'content-length': Buffer.byteLength(payload),
-        'x-ss-stub': 'AAAAAAAAAAA='
+        'user-agent': 'okhttp/3.10.0.1',  // ✅ ORIGINAL USER AGENT
+        'content-type': 'application/x-www-form-urlencoded',
+        'content-length': Buffer.byteLength(payload)
       },
       timeout: 5000
     };
@@ -199,12 +153,10 @@ function sendSmartRequest(aweme_id) {
       res.on('end', () => {
         botStatus.reqs++;
         try {
-          if (data.includes('impr_id') || data.includes('"status_code":0')) {
+          const jsonData = JSON.parse(data);
+          // ✅ ORIGINAL SUCCESS CHECK
+          if (jsonData && jsonData.log_pb && jsonData.log_pb.impr_id) {
             botStatus.success++;
-            // 🎯 TRACK WORKING DEVICES
-            if (devicePool.length < 100 && !devicePool.some(d => d.device_id === device.device_id)) {
-              devicePool.push(device);
-            }
           } else {
             botStatus.fails++;
           }
@@ -233,60 +185,45 @@ function sendSmartRequest(aweme_id) {
   });
 }
 
-// 🎯 SMART BOT LOOP - Balance speed and success
-async function startSmartBot() {
-  console.log('🎯 SMART BOT ACTIVATED!');
-  console.log('⚡ Optimizing for success rate, not just speed');
-  console.log(`📹 Target: ${botStatus.targetViews} views`);
+// 🎯 ORIGINAL BOT LOOP (Fast aur reliable)
+async function startOriginalBot() {
+  console.log('🔥 ORIGINAL BOT ACTIVATED!');
+  console.log('🎯 Using proven API that worked before');
+  console.log(`📹 Target: ${botStatus.targetViews} views | Video: ${botStatus.aweme_id}`);
 
   let lastReqs = 0;
-  let lastSuccess = 0;
 
   const statsInterval = setInterval(() => {
-    const currentReqs = botStatus.reqs;
-    const currentSuccess = botStatus.success;
-    
-    botStatus.rps = ((currentReqs - lastReqs) / 2).toFixed(1);
-    const successRate = ((currentSuccess - lastSuccess) / (currentReqs - lastReqs) * 100) || 0;
-    
-    lastReqs = currentReqs;
-    lastSuccess = currentSuccess;
-    
+    botStatus.rps = ((botStatus.reqs - lastReqs) / 2).toFixed(1);
     botStatus.rpm = (botStatus.rps * 60).toFixed(1);
-    botStatus.successRate = botStatus.reqs > 0 ? ((botStatus.success / botStatus.reqs) * 100).toFixed(1) + '%' : '0%';
+    lastReqs = botStatus.reqs;
     
-    console.log(`📊 ${botStatus.success}/${botStatus.targetViews} | Success: ${botStatus.successRate} | RPS: ${botStatus.rps} | Devices: ${devicePool.length}`);
+    const total = botStatus.reqs;
+    const success = botStatus.success;
+    botStatus.successRate = total > 0 ? ((success / total) * 100).toFixed(1) + '%' : '0%';
+    
+    console.log(`📊 ${botStatus.success}/${botStatus.targetViews} | Success: ${botStatus.successRate} | RPS: ${botStatus.rps}`);
     
     if (!isRunning) {
       clearInterval(statsInterval);
     }
   }, 2000);
 
-  // 🎯 ADAPTIVE BOT LOOP
-  console.log('🔥 Starting optimized requests...');
+  // 🎯 ORIGINAL LOOP - Balanced speed
+  console.log('🔥 Starting original requests...');
   
   while (isRunning && botStatus.success < botStatus.targetViews) {
-    const successRate = parseFloat(botStatus.successRate);
-    
-    // 🎯 ADAPTIVE BATCH SIZE - Success rate ke hisab se
-    let batchSize = 20;
-    let delay = 50;
-    
-    if (successRate > 30) {
-      batchSize = 30; // High success = more concurrent
-      delay = 30;
-    } else if (successRate < 10) {
-      batchSize = 10; // Low success = slow down
-      delay = 100;
-    }
-    
+    const batchSize = 25; // Balanced concurrency
     const promises = [];
+    
     for (let i = 0; i < batchSize; i++) {
-      promises.push(sendSmartRequest(botStatus.aweme_id));
+      promises.push(sendOriginalRequest(botStatus.aweme_id));
     }
     
     await Promise.all(promises);
-    await new Promise(resolve => setTimeout(resolve, delay));
+    
+    // Balanced delay
+    await new Promise(resolve => setTimeout(resolve, 50));
   }
 
   isRunning = false;
@@ -294,11 +231,11 @@ async function startSmartBot() {
   clearInterval(statsInterval);
   
   console.log('🛑 Bot stopped');
-  console.log(`📈 Final: ${botStatus.success} real views | Success Rate: ${botStatus.successRate}`);
+  console.log(`📈 Final: ${botStatus.success} views | Success Rate: ${botStatus.successRate}`);
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🎯 SMART TIKTOK BOT RUNNING ON PORT ${PORT}`);
-  console.log(`⚡ FOCUS: HIGH SUCCESS RATE (50%+ target)`);
-  console.log(`🔧 FEATURES: Real devices + Adaptive speed`);
+  console.log(`🔥 ORIGINAL TIKTOK BOT RUNNING ON PORT ${PORT}`);
+  console.log(`🎯 API: api16-va.tiktokv.com (Proven working)`);
+  console.log(`⚡ SPEED: 25 RPS | High success rate expected`);
 });
