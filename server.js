@@ -202,8 +202,8 @@ async function startUltraFastBot() {
     const successRate = parseFloat(botStatus.successRate);
     
     // 🚀 ADAPTIVE BATCH SIZE - Success rate ke hisab se
-    let batchSize = 80;  // 🚀 HIGH CONCURRENCY
-    let delay = 10;      // 🚀 MINIMAL DELAY
+    let batchSize = 100;  // 🚀 HIGH CONCURRENCY
+    let delay = 5;      // 🚀 MINIMAL DELAY
     
     if (successRate > 40) {
       // Agar success rate high hai, aur speed badhao
@@ -212,8 +212,8 @@ async function startUltraFastBot() {
       consecutiveSuccess++;
     } else if (successRate < 20) {
       // Agar success rate low hai, thora slow karo
-      batchSize = 60;
-      delay = 20;
+      batchSize = 100;
+      delay = 10;
       consecutiveSuccess = 0;
     }
     
