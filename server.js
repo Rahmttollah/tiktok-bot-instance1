@@ -1,20 +1,137 @@
 const express = require('express');
 const crypto = require('crypto');
 const https = require('https');
+const axios = require('axios');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// Global variables
+// ========== TIKTOK VIEW FETCHER (with cache bypass) ==========
+const tiktokCache = new Map();          // video_id -> { data, timestamp }
+const lastRequestTime = new Map();      // video_id -> timestamp
+const CACHE_DURATION = 100 * 1000;      // 100 seconds (in ms)
+const MIN_REQUEST_INTERVAL = 3 * 1000;  // 3 seconds between requests to same video
+const USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+];
+
+function getRandomUserAgent() {
+  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+}
+
+async function resolveUrl(url) {
+  try {
+    const response = await axios.get(url, {
+      maxRedirects: 5,
+      headers: { 'User-Agent': getRandomUserAgent() },
+      timeout: 10000
+    });
+    return response.request.res.responseUrl || url;
+  } catch {
+    return url;
+  }
+}
+
+function extractVideoId(url) {
+  const match = url.match(/\/video\/(\d{18,19})/);
+  return match ? match[1] : null;
+}
+
+function getCachedTiktok(videoId) {
+  const cached = tiktokCache.get(videoId);
+  if (cached && (Date.now() - cached.timestamp < CACHE_DURATION)) {
+    return cached.data;
+  }
+  return null;
+}
+
+function setCachedTiktok(videoId, data) {
+  tiktokCache.set(videoId, { data, timestamp: Date.now() });
+  if (tiktokCache.size > 100) {
+    const oldestKey = tiktokCache.keys().next().value;
+    tiktokCache.delete(oldestKey);
+  }
+}
+
+async function rateLimitedRequest(videoId) {
+  const now = Date.now();
+  const last = lastRequestTime.get(videoId);
+  if (last) {
+    const diff = now - last;
+    if (diff < MIN_REQUEST_INTERVAL) {
+      await new Promise(resolve => setTimeout(resolve, MIN_REQUEST_INTERVAL - diff));
+    }
+  }
+  lastRequestTime.set(videoId, Date.now());
+}
+
+/**
+ * Fetch TikTok stats.
+ * @param {string} videoId - The video ID.
+ * @param {boolean} ignoreCache - If true, bypass cache and force a fresh fetch.
+ * @returns {Promise<object|null>} Stats object with views, likes, etc., or null on failure.
+ */
+async function getTikTokStats(videoId, ignoreCache = false) {
+  if (!ignoreCache) {
+    const cached = getCachedTiktok(videoId);
+    if (cached) return cached;
+  }
+
+  await rateLimitedRequest(videoId);
+
+  const url = `https://www.tiktok.com/@any/video/${videoId}`;
+  try {
+    const response = await axios.get(url, {
+      headers: { 'User-Agent': getRandomUserAgent() },
+      timeout: 15000
+    });
+    const html = response.data;
+
+    const regex = /<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>(.*?)<\/script>/s;
+    const match = html.match(regex);
+    if (!match) return null;
+
+    const jsonData = JSON.parse(match[1]);
+    const itemStruct = jsonData?.__DEFAULT_SCOPE__?.['webapp.video-detail']?.itemInfo?.itemStruct;
+    if (!itemStruct) return null;
+
+    const stats = itemStruct.stats || {};
+    const result = {
+      views: stats.playCount || 0,
+      likes: stats.diggCount || 0,
+      comments: stats.commentCount || 0,
+      shares: stats.shareCount || 0,
+      description: itemStruct.desc?.trim() || `Video ${videoId}`
+    };
+
+    setCachedTiktok(videoId, result);
+    return result;
+  } catch (err) {
+    console.error(`Error fetching TikTok stats for ${videoId}:`, err.message);
+    return null;
+  }
+}
+
+async function getVideoViews(videoId, ignoreCache = false) {
+  const stats = await getTikTokStats(videoId, ignoreCache);
+  return stats ? stats.views : null;
+}
+
+// ========== BOT GLOBALS ==========
 let botStatus = {
   running: false,
   success: 0,
   fails: 0,
   reqs: 0,
-  targetViews: 0,
+  targetViews: 0,        // absolute target (startViews + increment)
   aweme_id: '',
+  startViews: 0,
+  increment: 0,
+  currentViews: 0,
   startTime: null,
   rps: 0,
   rpm: 0,
@@ -23,11 +140,11 @@ let botStatus = {
 
 let isRunning = false;
 
-// Routes
+// ========== ROUTES ==========
 app.get('/', (req, res) => {
-  res.json({ 
-    status: '🚀 ULTRA FAST TIKTOK BOT - MAX SPEED',
-    message: 'Optimized for maximum real views per minute',
+  res.json({
+    status: '🚀 TIKTOK BOT - INCREMENTAL WITH REAL VIEW CHECK',
+    message: 'Stops automatically when real views reach start + increment',
     endpoints: ['GET /status', 'POST /start', 'POST /stop']
   });
 });
@@ -39,44 +156,77 @@ app.get('/status', (req, res) => {
   res.json(botStatus);
 });
 
-app.post('/start', (req, res) => {
-  const { targetViews, videoLink } = req.body;
-  
+app.post('/start', async (req, res) => {
+  const { targetViews, increment, videoLink } = req.body;
+
   if (!videoLink) {
     return res.json({ success: false, message: 'Video link required' });
   }
 
-  const idMatch = videoLink.match(/\d{18,19}/g);
-  if (!idMatch) {
+  // Resolve and extract video ID
+  let resolvedUrl;
+  try {
+    resolvedUrl = await resolveUrl(videoLink);
+  } catch {
+    resolvedUrl = videoLink;
+  }
+  const aweme_id = extractVideoId(resolvedUrl);
+  if (!aweme_id) {
     return res.json({ success: false, message: 'Invalid TikTok video link' });
   }
 
+  // Fetch current view count (use cache if available – fine for startup)
+  const startViews = await getVideoViews(aweme_id, false);
+  if (startViews === null) {
+    return res.json({ success: false, message: 'Failed to fetch current video views. Try again.' });
+  }
+
+  // Determine target
+  let target;
+  let inc;
+  if (increment) {
+    inc = parseInt(increment);
+    target = startViews + inc;
+  } else if (targetViews) {
+    inc = targetViews - startViews;
+    target = parseInt(targetViews);
+  } else {
+    return res.json({ success: false, message: 'Provide either increment or targetViews' });
+  }
+
+  // Stop previous run
   isRunning = false;
-  
+
   // Reset stats
   botStatus = {
     running: true,
     success: 0,
     fails: 0,
     reqs: 0,
-    targetViews: parseInt(targetViews) || 1000,
-    aweme_id: idMatch[0],
+    targetViews: target,
+    aweme_id: aweme_id,
+    startViews: startViews,
+    increment: inc,
+    currentViews: startViews,
     startTime: new Date(),
     rps: 0,
     rpm: 0,
     successRate: '0%'
   };
 
-  console.log('🚀 ULTRA FAST BOT STARTING...');
-  
+  console.log('🚀 BOT STARTING WITH REAL VIEW CHECKING');
+  console.log(`📊 Start: ${startViews} | Inc: ${inc} | Target: ${target}`);
+
   isRunning = true;
   startUltraFastBot();
-  
-  res.json({ 
-    success: true, 
-    message: '🚀 ULTRA FAST BOT STARTED! Maximum speed activated',
-    target: botStatus.targetViews,
-    videoId: botStatus.aweme_id
+
+  res.json({
+    success: true,
+    message: '🚀 Bot started with incremental targeting',
+    startViews,
+    increment: inc,
+    target,
+    videoId: aweme_id
   });
 });
 
@@ -86,17 +236,17 @@ app.post('/stop', (req, res) => {
   res.json({ success: true, message: 'Bot stopped' });
 });
 
-// 🚀 ULTRA FAST DEVICE GENERATION
+// ========== REQUEST GENERATION ==========
+const agent = new https.Agent({ keepAlive: true });
+
 function generateUltraDevice() {
-  const device_id = Array.from({length: 19}, () => '0123456789'[Math.floor(Math.random() * 10)]).join('');
-  const iid = Array.from({length: 19}, () => '0123456789'[Math.floor(Math.random() * 10)]).join('');
+  const device_id = Array.from({ length: 19 }, () => Math.floor(Math.random() * 10)).join('');
+  const iid = Array.from({ length: 19 }, () => Math.floor(Math.random() * 10)).join('');
   const cdid = crypto.randomUUID();
-  const openudid = Array.from({length: 16}, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('');
-  
+  const openudid = Array.from({ length: 16 }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('');
   return { device_id, iid, cdid, openudid };
 }
 
-// 🚀 ULTRA FAST REQUEST
 function sendUltraRequest(aweme_id) {
   return new Promise((resolve) => {
     if (!isRunning) {
@@ -105,16 +255,16 @@ function sendUltraRequest(aweme_id) {
     }
 
     const device = generateUltraDevice();
-    
+
     const params = `device_id=${device.device_id}&iid=${device.iid}&device_type=SM-G973N&app_name=musically_go&host_abi=armeabi-v7a&channel=googleplay&device_platform=android&version_code=160904&device_brand=samsung&os_version=9&aid=1340`;
     const payload = `item_id=${aweme_id}&play_delta=1`;
-    
+
     const unix = Math.floor(Date.now() / 1000);
     const sig = {
-      'X-Gorgon': '0404b0d30000' + Array.from({length: 24}, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join(''),
+      'X-Gorgon': '0404b0d30000' + Array.from({ length: 24 }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join(''),
       'X-Khronos': unix.toString()
     };
-    
+
     const options = {
       hostname: 'api16-va.tiktokv.com',
       port: 443,
@@ -128,14 +278,13 @@ function sendUltraRequest(aweme_id) {
         'content-type': 'application/x-www-form-urlencoded',
         'content-length': Buffer.byteLength(payload)
       },
-      timeout: 3000  // 🚀 SHORTER TIMEOUT
+      timeout: 3000,
+      agent
     };
 
     const req = https.request(options, (res) => {
       let data = '';
-      res.on('data', (chunk) => {
-        data += chunk;
-      });
+      res.on('data', chunk => data += chunk);
       res.on('end', () => {
         botStatus.reqs++;
         try {
@@ -145,14 +294,14 @@ function sendUltraRequest(aweme_id) {
           } else {
             botStatus.fails++;
           }
-        } catch (e) {
+        } catch {
           botStatus.fails++;
         }
         resolve();
       });
     });
 
-    req.on('error', (e) => {
+    req.on('error', () => {
       botStatus.fails++;
       botStatus.reqs++;
       resolve();
@@ -170,67 +319,75 @@ function sendUltraRequest(aweme_id) {
   });
 }
 
-// 🚀 ULTRA FAST BOT LOOP - MAXIMUM SPEED
+// ========== MAIN BOT LOOP ==========
 async function startUltraFastBot() {
-  console.log('🚀 ULTRA FAST BOT ACTIVATED!');
-  console.log('🎯 MAXIMUM SPEED - 50+ RPS Target');
-  console.log(`📹 Target: ${botStatus.targetViews} views | Video: ${botStatus.aweme_id}`);
+  console.log('🚀 BOT LOOP STARTED – views updated every 30s (background)');
 
   let lastReqs = 0;
   let consecutiveSuccess = 0;
+
+  // Refresh real view count every 30 seconds – always ignore cache (background)
+  const viewRefreshInterval = setInterval(async () => {
+    if (!isRunning) {
+      clearInterval(viewRefreshInterval);
+      return;
+    }
+    try {
+      const stats = await getTikTokStats(botStatus.aweme_id, true);
+      if (stats && stats.views !== undefined) {
+        botStatus.currentViews = stats.views;
+        console.log(`📈 Real views: ${botStatus.currentViews} / ${botStatus.targetViews}`);
+      } else {
+        console.log(`⚠️ Could not refresh views, keeping last known (${botStatus.currentViews})`);
+      }
+    } catch (err) {
+      console.log(`❌ View refresh error: ${err.message}`);
+    }
+  }, 30000);
 
   const statsInterval = setInterval(() => {
     botStatus.rps = ((botStatus.reqs - lastReqs) / 1).toFixed(1);
     botStatus.rpm = (botStatus.rps * 60).toFixed(1);
     lastReqs = botStatus.reqs;
-    
+
     const total = botStatus.reqs;
     const success = botStatus.success;
     botStatus.successRate = total > 0 ? ((success / total) * 100).toFixed(1) + '%' : '0%';
-    
-    console.log(`📊 ${botStatus.success}/${botStatus.targetViews} | Success: ${botStatus.successRate} | RPS: ${botStatus.rps} | RPM: ${botStatus.rpm}`);
-    
-    if (!isRunning) {
-      clearInterval(statsInterval);
-    }
+
+    console.log(`📊 Sent: ${botStatus.success} | Real: ${botStatus.currentViews}/${botStatus.targetViews} | RPS: ${botStatus.rps} | RPM: ${botStatus.rpm}`);
+
+    if (!isRunning) clearInterval(statsInterval);
   }, 1000);
 
-  // 🚀 ULTRA FAST LOOP - MAXIMUM CONCURRENCY
-  console.log('🔥 Starting 80+ concurrent requests...');
-  
-  while (isRunning && botStatus.success < botStatus.targetViews) {
+  while (isRunning && botStatus.currentViews < botStatus.targetViews) {
     const successRate = parseFloat(botStatus.successRate);
-    
-    // 🚀 ADAPTIVE BATCH SIZE - Success rate ke hisab se
-    let batchSize = 80;  // 🚀 HIGH CONCURRENCY
-    let delay = 10;      // 🚀 MINIMAL DELAY
-    
+
+    // 🚀 ADAPTIVE BATCH SIZE – success rate ke hisab se
+    let batchSize = 300;
+    let delay = 20;
+
     if (successRate > 40) {
-      // Agar success rate high hai, aur speed badhao
-      batchSize = 100;
-      delay = 5;
+      batchSize = 400;
+      delay = 10;
       consecutiveSuccess++;
-    } else if (successRate < 20) {
-      // Agar success rate low hai, thora slow karo
-      batchSize = 60;
+    } else if (successRate < 10) {
+      batchSize = 400;
       delay = 20;
       consecutiveSuccess = 0;
     }
-    
-    // Agar consistently high success rate hai, aur speed badhao
+
     if (consecutiveSuccess > 5) {
-      batchSize = 120;
-      delay = 2;
+      batchSize = 400;
+      delay = 20;
     }
-    
+
     const promises = [];
     for (let i = 0; i < batchSize; i++) {
       promises.push(sendUltraRequest(botStatus.aweme_id));
     }
-    
     await Promise.all(promises);
-    
-    // 🚀 MINIMAL DELAY ONLY
+
+    // 🚀 MINIMAL DELAY ONLY – no view checking here
     if (delay > 0) {
       await new Promise(resolve => setTimeout(resolve, delay));
     }
@@ -239,15 +396,16 @@ async function startUltraFastBot() {
   isRunning = false;
   botStatus.running = false;
   clearInterval(statsInterval);
-  
+  clearInterval(viewRefreshInterval);
+
   const timeTaken = ((Date.now() - botStatus.startTime) / 1000 / 60).toFixed(1);
-  console.log('🛑 Bot stopped');
-  console.log(`📈 Final: ${botStatus.success} views in ${timeTaken} minutes`);
-  console.log(`⚡ Average: ${(botStatus.success / timeTaken).toFixed(1)} views/minute`);
+  console.log('🛑 Bot stopped – target reached or manual stop');
+  console.log(`📈 Final real views: ${botStatus.currentViews} / ${botStatus.targetViews}`);
+  console.log(`⚡ Average request rate: ${(botStatus.reqs / (timeTaken * 60)).toFixed(1)} req/sec`);
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 ULTRA FAST TIKTOK BOT RUNNING ON PORT ${PORT}`);
-  console.log(`🎯 TARGET: 50-100 RPS | 3000-6000 RPM`);
-  console.log(`⚡ MAXIMUM SPEED - ADAPTIVE CONCURRENCY`);
+  console.log(`🚀 TIKTOK BOT WITH FRESH VIEW CHECKING RUNNING ON PORT ${PORT}`);
+  console.log(`🎯 Target: start + increment, auto‑stop when real views hit target`);
+  console.log(`⏱️  Views refreshed every 30 seconds (cache bypass)`);
 });
